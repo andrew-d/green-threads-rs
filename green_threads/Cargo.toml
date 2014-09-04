@@ -1,0 +1,10 @@
+[package]
+
+name = "green_threads"
+version = "0.0.1"
+authors = ["Andrew Dunham <andrew@du.nham.ca>"]
+
+[lib]
+name = "green_threads"
+path = "src/lib.rs"
+plugin = true
