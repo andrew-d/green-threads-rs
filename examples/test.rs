@@ -9,7 +9,13 @@ fn info(x: &int, y: &int) {
 
 green!(fn foobar(x: int, y: int) -> int {
     info(&x, &y);
-    x + y - 1
+
+    let mut foo = 1;
+    for i in range(0, y) {
+        foo += x * i;
+    }
+
+    foo
 })
 
 fn main() {

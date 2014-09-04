@@ -17,8 +17,6 @@ use syntax::util::small_vector::SmallVector;
 
 use rustc::plugin::Registry;
 
-// quote_stmt!(cx, green_yield!();)
-
 // Helper struct that allows us to use multiple Items as a MacResult
 struct MacItems {
     items: Vec<Gc<ast::Item>>,
@@ -66,11 +64,58 @@ impl GreenFolder {
             stmt: s,
         }
     }
+
+    fn gen_block(&self, old_block: &Gc<ast::Block>) -> Gc<ast::Block> {
+        // Prepend a call to our yield macro to the statements in this block.
+        let mut new_stmts = old_block.stmts.clone();
+        new_stmts.insert(0, self.stmt.clone());
+
+        // This would be nicer if I could figure out how to get the
+        // "..*block" syntax to work properly...
+        let new_block = box (GC) ast::Block {
+            stmts: new_stmts,
+
+            view_items: old_block.view_items.clone(),
+            expr: old_block.expr.clone(),
+            id: old_block.id,
+            rules: old_block.rules.clone(),
+            span: old_block.span.clone(),
+        };
+
+        new_block
+    }
 }
 
 impl Folder for GreenFolder {
     fn fold_expr(&mut self, e: Gc<ast::Expr>) -> Gc<ast::Expr> {
-        fold::noop_fold_expr(e, self)
+        let folded = fold::noop_fold_expr(e, self);
+
+        let new_node = match folded.node {
+            ast::ExprForLoop(pat, expr, block, ident) => {
+                println!("found for loop");
+
+                ast::ExprForLoop(pat, expr, self.gen_block(&block), ident)
+            },
+            ast::ExprWhile(expr, block, ident) => {
+                println!("found while loop");
+
+                ast::ExprWhile(expr, self.gen_block(&block), ident)
+            },
+            ast::ExprLoop(block, ident) => {
+                println!("found loop");
+
+                ast::ExprLoop(self.gen_block(&block), ident)
+            },
+            ref n => n.clone(),
+        };
+
+        let new_expr = box (GC) ast::Expr {
+            id: folded.id,
+            node: new_node,
+            span: folded.span,
+        };
+
+        new_expr
     }
 
     fn fold_item_underscore(&mut self, i: &ast::Item_) -> ast::Item_ {
@@ -78,21 +123,7 @@ impl Folder for GreenFolder {
 
         let new_item = match i {
             ast::ItemFn(ref decl, ref style, ref abi, ref generics, ref block) => {
-                // Prepend a call to our yield macro to the statements in this block.
-                let mut new_stmts = block.stmts.clone();
-                new_stmts.insert(0, self.stmt.clone());
-
-                // This would be nicer if I could figure out how to get the
-                // "..*block" syntax to work properly...
-                let new_block = box (GC) ast::Block {
-                    stmts: new_stmts,
-
-                    view_items: block.view_items.clone(),
-                    expr: block.expr.clone(),
-                    id: block.id,
-                    rules: block.rules.clone(),
-                    span: block.span.clone(),
-                };
+                let new_block = self.gen_block(block);
 
                 ast::ItemFn(decl.clone(), style.clone(),
                             abi.clone(), generics.clone(),
