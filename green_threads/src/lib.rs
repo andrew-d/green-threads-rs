@@ -1,10 +1,13 @@
 #![crate_name="green_threads"]
 #![crate_type="dylib"]
 
-#![feature(quote, plugin_registrar, macro_rules)]
+#![feature(quote, phase, plugin_registrar, macro_rules)]
 
 extern crate syntax;
 extern crate rustc;
+
+#[phase(plugin, link)]
+extern crate log;
 
 use std::gc::{Gc, GC};
 
