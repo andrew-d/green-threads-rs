@@ -10,48 +10,27 @@ use std::gc::{Gc, GC};
 
 use syntax::ast;
 use syntax::codemap;
-use syntax::ext::base::{ExtCtxt, MacResult, MacroDef, DummyResult};
+use syntax::ext::base::{ExtCtxt, ItemModifier};
 use syntax::fold::{mod, Folder};
-use syntax::parse;
-use syntax::util::small_vector::SmallVector;
+use syntax::parse::token::intern;
 
 use rustc::plugin::Registry;
 
-// Helper struct that allows us to use multiple Items as a MacResult
-struct MacItems {
-    items: Vec<Gc<ast::Item>>,
-}
-
-impl MacItems {
-    pub fn new(items: Vec<Gc<ast::Item>>) -> Box<MacResult+'static> {
-        box MacItems { items: items } as Box<MacResult+'static>
-    }
-}
-
-impl MacResult for MacItems {
-    fn make_def(&self) -> Option<MacroDef> { None }
-    fn make_expr(&self) -> Option<Gc<ast::Expr>> { None }
-    fn make_pat(&self) -> Option<Gc<ast::Pat>> { None }
-    fn make_stmt(&self) -> Option<Gc<ast::Stmt>> { None }
-
-    fn make_items(&self) -> Option<SmallVector<Gc<ast::Item>>> {
-        Some(SmallVector::many(self.items.clone()))
-    }
-}
 
 #[plugin_registrar]
 #[doc(hidden)]
 pub fn plugin_registrar(registrar: &mut Registry) {
-    registrar.register_macro("green", green)
+    registrar.register_syntax_extension(intern("greenify"), ItemModifier(greenify));
 }
 
-fn green(cx: &mut ExtCtxt, sp: codemap::Span, tts: &[ast::TokenTree]) -> Box<MacResult+'static> {
-    let i = match parse(cx, tts) {
-        Some(i) => i,
-        None    => DummyResult::expr(sp),
-    };
+fn greenify(cx: &mut ExtCtxt, _sp: codemap::Span, _attr: Gc<ast::MetaItem>, it: Gc<ast::Item>) -> Gc<ast::Item> {
+    // This is what we insert to "yield".
+    let new_stmt = quote_stmt!(&cx, green_yield!(););
 
-    i
+    // Do the actual insertion.
+    let f = GreenFolder::new(new_stmt).fold_item(it).expect_one("GreenFolder returned more than 1 item");
+
+    f
 }
 
 struct GreenFolder {
@@ -92,17 +71,17 @@ impl Folder for GreenFolder {
 
         let new_node = match folded.node {
             ast::ExprForLoop(pat, expr, block, ident) => {
-                println!("found for loop");
+                debug!("found for loop");
 
                 ast::ExprForLoop(pat, expr, self.gen_block(&block), ident)
             },
             ast::ExprWhile(expr, block, ident) => {
-                println!("found while loop");
+                debug!("found while loop");
 
                 ast::ExprWhile(expr, self.gen_block(&block), ident)
             },
             ast::ExprLoop(block, ident) => {
-                println!("found loop");
+                debug!("found loop");
 
                 ast::ExprLoop(self.gen_block(&block), ident)
             },
@@ -137,37 +116,6 @@ impl Folder for GreenFolder {
     }
 }
 
-
-fn parse(cx: &mut ExtCtxt, tts: &[ast::TokenTree]) -> Option<Box<MacResult+'static>> {
-    use syntax::print::pprust;
-
-    let mut parser = parse::new_parser_from_tts(cx.parse_sess(), cx.cfg(),
-                                                Vec::from_slice(tts));
-
-    let item = match parser.parse_item(vec![]) {
-        Some(i) => {
-            let items: Vec<Gc<ast::Item>> = cx.expander().
-                fold_item(i).
-                move_iter().
-                collect();
-
-            let mut folded = Vec::new();
-            for i in items.move_iter() {
-                let new_stmt = quote_stmt!(&cx, green_yield!(););
-                let f = GreenFolder::new(new_stmt).fold_item(i).expect_one("GreenFolder returned more than 1 item");
-                folded.push(f);
-            }
-
-            Some(MacItems::new(folded))
-        },
-        None => {
-            cx.span_err(parser.span, "Expected item");
-            None
-        },
-    };
-
-    item
-}
 
 /**
  * This is a simple macro that could "actually" do green-thread yielding.

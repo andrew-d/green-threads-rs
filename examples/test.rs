@@ -7,7 +7,8 @@ fn info(x: &int, y: &int) {
     println!("In foobar({}, {})", x, y);
 }
 
-green!(fn foobar(x: int, y: int) -> int {
+#[greenify]
+fn foobar(x: int, y: int) -> int {
     info(&x, &y);
 
     let mut foo = 1;
@@ -16,7 +17,7 @@ green!(fn foobar(x: int, y: int) -> int {
     }
 
     foo
-})
+}
 
 fn main() {
     println!("This is the example");
