@@ -9,13 +9,12 @@ extern crate rustc;
 #[phase(plugin, link)]
 extern crate log;
 
-use std::gc::{Gc, GC};
-
 use syntax::ast;
 use syntax::codemap;
-use syntax::ext::base::{ExtCtxt, ItemModifier};
+use syntax::ext::base::{ExtCtxt, Modifier, ItemModifier};
 use syntax::fold::{mod, Folder};
 use syntax::parse::token::intern;
+use syntax::ptr::{P};
 
 use rustc::plugin::Registry;
 
@@ -23,10 +22,10 @@ use rustc::plugin::Registry;
 #[plugin_registrar]
 #[doc(hidden)]
 pub fn plugin_registrar(registrar: &mut Registry) {
-    registrar.register_syntax_extension(intern("greenify"), ItemModifier(greenify));
+    registrar.register_syntax_extension(intern("greenify"), Modifier(box greenify as Box<ItemModifier + 'static>));
 }
 
-fn greenify(cx: &mut ExtCtxt, _sp: codemap::Span, _attr: Gc<ast::MetaItem>, it: Gc<ast::Item>) -> Gc<ast::Item> {
+fn greenify(cx: &mut ExtCtxt, _sp: codemap::Span, _attr: &ast::MetaItem, it: P<ast::Item>) -> P<ast::Item> {
     // This is what we insert to "yield".
     let new_stmt = quote_stmt!(&cx, green_yield!(););
 
@@ -37,24 +36,24 @@ fn greenify(cx: &mut ExtCtxt, _sp: codemap::Span, _attr: Gc<ast::MetaItem>, it: 
 }
 
 struct GreenFolder {
-    stmt: Gc<ast::Stmt>,
+    stmt: P<ast::Stmt>,
 }
 
 impl GreenFolder {
-    pub fn new(s: Gc<ast::Stmt>) -> GreenFolder {
+    pub fn new(s: P<ast::Stmt>) -> GreenFolder {
         GreenFolder {
             stmt: s,
         }
     }
 
-    fn gen_block(&self, old_block: &Gc<ast::Block>) -> Gc<ast::Block> {
+    fn gen_block(&self, old_block: &P<ast::Block>) -> P<ast::Block> {
         // Prepend a call to our yield macro to the statements in this block.
         let mut new_stmts = old_block.stmts.clone();
         new_stmts.insert(0, self.stmt.clone());
 
         // This would be nicer if I could figure out how to get the
         // "..*block" syntax to work properly...
-        let new_block = box (GC) ast::Block {
+        let new_block = P(ast::Block {
             stmts: new_stmts,
 
             view_items: old_block.view_items.clone(),
@@ -62,45 +61,47 @@ impl GreenFolder {
             id: old_block.id,
             rules: old_block.rules.clone(),
             span: old_block.span.clone(),
-        };
+        });
 
         new_block
     }
 }
 
 impl Folder for GreenFolder {
-    fn fold_expr(&mut self, e: Gc<ast::Expr>) -> Gc<ast::Expr> {
-        let folded = fold::noop_fold_expr(e, self);
+    fn fold_expr(&mut self, e: P<ast::Expr>) -> P<ast::Expr> {
+        let folded = e.map(|t| fold::noop_fold_expr(t, self));
 
-        let new_node = match folded.node {
-            ast::ExprForLoop(pat, expr, block, ident) => {
-                debug!("found for loop");
+        let new_expr = folded.and_then(|folded| {
+            let n = match folded.node {
+                ast::ExprForLoop(pat, expr, block, ident) => {
+                    debug!("found for loop");
 
-                ast::ExprForLoop(pat, expr, self.gen_block(&block), ident)
-            },
-            ast::ExprWhile(expr, block, ident) => {
-                debug!("found while loop");
+                    ast::ExprForLoop(pat, expr, self.gen_block(&block), ident)
+                },
+                ast::ExprWhile(expr, block, ident) => {
+                    debug!("found while loop");
 
-                ast::ExprWhile(expr, self.gen_block(&block), ident)
-            },
-            ast::ExprLoop(block, ident) => {
-                debug!("found loop");
+                    ast::ExprWhile(expr, self.gen_block(&block), ident)
+                },
+                ast::ExprLoop(block, ident) => {
+                    debug!("found loop");
 
-                ast::ExprLoop(self.gen_block(&block), ident)
-            },
-            ref n => n.clone(),
-        };
+                    ast::ExprLoop(self.gen_block(&block), ident)
+                },
+                ref n => n.clone(),
+            };
 
-        let new_expr = box (GC) ast::Expr {
-            id: folded.id,
-            node: new_node,
-            span: folded.span,
-        };
+            P(ast::Expr {
+                id:   folded.id,
+                node: n,
+                span: folded.span,
+            })
+        });
 
         new_expr
     }
 
-    fn fold_item_underscore(&mut self, i: &ast::Item_) -> ast::Item_ {
+    fn fold_item_underscore(&mut self, i: ast::Item_) -> ast::Item_ {
         let i = fold::noop_fold_item_underscore(i, self);
 
         let new_item = match i {
